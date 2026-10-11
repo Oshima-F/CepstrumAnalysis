@@ -2,13 +2,10 @@
 
     python speech_cepstrogram.py [data/mao.wav]
 
-Input
-    WAV file, 16-bit PCM, mono or multichannel (channels averaged); default data/mao.wav
-Output
-    run() -> {"path": PNG of waveform / log spectrogram / envelope spectrogram / cepstrogram + f0,
-              "voiced_ratio": fraction of frames above PEAK_MIN, "median_f0_hz": median over voiced frames}
-    PNG is written to OUT_DIR as speech_<wav name>.png
-Parameters (edit below, or pass to run())
+Plots waveform, log spectrogram, envelope spectrogram and cepstrogram with an f0 track for a
+16-bit PCM WAV (mono or multichannel, channels averaged; default data/mao.wav) and writes
+speech_<wav name>.png. The settings below are the defaults of run(); edit them here or pass the
+arguments to run().
 """
 import sys
 from pathlib import Path
@@ -29,7 +26,21 @@ SPECTRUM_FMAX = 8000    # upper frequency shown in the spectrograms [Hz]
 
 def run(path=DEFAULT_WAV, out_dir=OUT_DIR, f0_range=F0_RANGE, peak_min=PEAK_MIN,
         frame_len=FRAME_LEN, hop=HOP, split_khz_inv=SPLIT_KHZ_INV):
-    """Returns {"path", "voiced_ratio", "median_f0_hz"}. ``f0_range`` [Hz] bounds the pitch search."""
+    """Cepstrogram analysis of a speech WAV: f0 track and spectral envelope.
+
+    Args:
+        path: Speech WAV (16-bit PCM). Default ``DEFAULT_WAV`` (data/mao.wav).
+        out_dir: Directory for the PNG. Default ``OUT_DIR`` (``None`` = examples/output).
+        f0_range: Pitch search range [Hz]. Default ``F0_RANGE``.
+        peak_min: Minimum high-part peak height to call a frame voiced. Default ``PEAK_MIN``.
+        frame_len: Analysis frame [samples]. Default ``FRAME_LEN``.
+        hop: Frame shift [samples]. Default ``HOP``.
+        split_khz_inv: Low/high split quefrency [kHz^-1]. Default ``SPLIT_KHZ_INV``.
+
+    Returns:
+        Dict with ``"path"`` (the PNG), ``"voiced_ratio"`` (fraction of frames above
+        ``peak_min``) and ``"median_f0_hz"`` (median pitch over voiced frames).
+    """
     path = Path(path)
     x, fs = read_wav(path)
     # low part = spectral envelope; high part = pitch structure

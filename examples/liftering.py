@@ -1,12 +1,8 @@
 """Liftering: separate spectral envelope (low quefrency) from pitch structure (high quefrency).
 
-Input
-    excerpt of a speech WAV (default data/mao.wav, made by synth_aivis.py): SEG_START, SEG_DUR
-Output
-    run() -> {"path": PNG of cepstrum + lifter weights, envelope extraction, other lifters,
-              "f0_hz": pitch from the strongest real-cepstrum peak within F0_RANGE}
-    PNG is written to OUT_DIR as liftering.png
-Parameters (edit below, or pass to run())
+Plots the cepstrum with lifter weights, the envelope extraction and other lifters for an excerpt of
+a speech WAV (default data/mao.wav, made by synth_aivis.py) and writes liftering.png. The settings
+below are the defaults of run(); edit them here or pass the arguments to run().
 """
 import numpy as np
 
@@ -29,7 +25,25 @@ FMAX = 8000           # spectrum range shown [Hz]
 
 def run(path=WAV, out_dir=OUT_DIR, start=SEG_START, dur=SEG_DUR, window=WINDOW, split_khz_inv=SPLIT_KHZ_INV,
         f0_range=F0_RANGE, band_ratio=BAND_RATIO, notch_width_khz_inv=NOTCH_WIDTH_KHZ_INV, q_max=Q_MAX):
-    """Returns {"path", "f0_hz"}."""
+    """Split the real cepstrum of a speech excerpt into envelope / fine structure and plot it.
+
+    Args:
+        path: Speech WAV (16-bit PCM). Default ``WAV`` (data/mao.wav).
+        out_dir: Directory for the PNG. Default ``OUT_DIR`` (``None`` = examples/output).
+        start: Excerpt start [s]. Default ``SEG_START``.
+        dur: Excerpt length [s]. Default ``SEG_DUR``.
+        window: Analysis window. Default ``WINDOW``.
+        split_khz_inv: Low/high split quefrency [kHz^-1]. Default ``SPLIT_KHZ_INV``.
+        f0_range: Pitch search range [Hz]; the notch and bandpass follow the detected f0.
+            Default ``F0_RANGE``.
+        band_ratio: Bandpass keeps ripple periods ``f0 / band_ratio`` to ``f0 * band_ratio``.
+            Default ``BAND_RATIO``.
+        notch_width_khz_inv: Notch width [kHz^-1]. Default ``NOTCH_WIDTH_KHZ_INV``.
+        q_max: Largest quefrency shown [kHz^-1]. Default ``Q_MAX``.
+
+    Returns:
+        Dict with ``"path"`` (the PNG) and ``"f0_hz"`` (detected pitch).
+    """
     x, fs = load_segment(path, start, dur)
     n = len(x)
     # real-cepstrum analysis split at the given quefrency

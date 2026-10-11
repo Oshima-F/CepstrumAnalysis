@@ -1,12 +1,8 @@
-"""Real / complex / power cepstrum of a speech excerpt.
+"""Real / power cepstrum of a speech excerpt.
 
-Input
-    excerpt of a speech WAV (default data/mao.wav, made by synth_aivis.py): SEG_START, SEG_DUR
-Output
-    run() -> {"path": PNG of waveform / log spectrum / real+power / complex cepstrum,
-              "f0_hz": pitch from the strongest real-cepstrum peak within F0_RANGE}
-    PNG is written to OUT_DIR as cepstrum_kinds.png
-Parameters (edit below, or pass to run())
+Plots waveform, log spectrum, real + power cepstrum and the signed-quefrency real cepstrum of an excerpt of a speech
+WAV (default data/mao.wav, made by synth_aivis.py) and writes cepstrum_kinds.png. The settings below
+are the defaults of run(); edit them here or pass the arguments to run().
 """
 import numpy as np
 
@@ -26,15 +22,28 @@ FMAX = 8000           # spectrum range shown [Hz]
 
 def run(path=WAV, out_dir=OUT_DIR, start=SEG_START, dur=SEG_DUR, window=WINDOW, f0_range=F0_RANGE,
         q_max=Q_MAX):
-    """Plot the three cepstrum kinds. Returns {"path", "f0_hz"}."""
+    """Plot the three cepstrum kinds of a speech excerpt.
+
+    Args:
+        path: Speech WAV (16-bit PCM). Default ``WAV`` (data/mao.wav).
+        out_dir: Directory for the PNG. Default ``OUT_DIR`` (``None`` = examples/output).
+        start: Excerpt start [s]. Default ``SEG_START``.
+        dur: Excerpt length [s]. Default ``SEG_DUR``.
+        window: Analysis window of the real / power cepstrum. Default ``WINDOW``.
+        f0_range: Pitch search range [Hz]. Default ``F0_RANGE``.
+        q_max: Largest quefrency shown [kHz^-1]. Default ``Q_MAX``.
+
+    Returns:
+        Dict with ``"path"`` (the PNG) and ``"f0_hz"`` (pitch from the strongest real-cepstrum
+        peak within ``f0_range``).
+    """
     y, fs = load_segment(path, start, dur)
     n = len(y)
-    n_fft = n + n % 2  # complex cepstrum needs an even FFT length
+    n_fft = n
     t = np.arange(n) / fs
 
     real = cp.cepstrum(y, fs, kind="real", n_fft=n_fft, window=window)
     power = cp.cepstrum(y, fs, kind="power", n_fft=n_fft, window=window)
-    cplx = cp.cepstrum(y, fs, kind="complex", n_fft=n_fft)
     f0 = f0_from_cepstrum(real, f0_range)
 
     fig, ax = plt.subplots(2, 2, figsize=(11, 7))
@@ -56,11 +65,11 @@ def run(path=WAV, out_dir=OUT_DIR, start=SEG_START, dur=SEG_DUR, window=WINDOW, 
     ax[1, 0].legend()
     period_axis(ax[1, 0])
 
-    qs = np.fft.fftshift(cp.quefrency_axis(cplx, "kHz^-1"))
-    cs = np.fft.fftshift(cplx.data)
+    qs = np.fft.fftshift(cp.quefrency_axis(real, "kHz^-1"))
+    cs = np.fft.fftshift(real.data)
     m2 = np.abs(qs) < q_max
     ax[1, 1].plot(qs[m2], cs[m2])
-    ax[1, 1].set(title=f"Complex cepstrum (delay={cplx.delay} samples, signed quefrency)", xlabel=QLABEL)
+    ax[1, 1].set(title="Real cepstrum, signed quefrency (even)", xlabel=QLABEL)
     return {"path": save(fig, "cepstrum_kinds.png", out_dir), "f0_hz": f0}
 
 

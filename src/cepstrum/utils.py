@@ -1,14 +1,4 @@
-"""Small helpers shared across the package.
-
-Inputs
-    to_mono(x)          x: array-like, [N] or [ch, N]
-    get_window(w, n)    w: "hann" | "hamming" | "rect" | None | ndarray[n]; n: frame length
-Outputs
-    to_mono             float ndarray [N] (channels averaged)
-    get_window          float ndarray [n], periodic window (None / "rect" -> ones)
-Parameters
-    none (WindowSpec is the accepted window type alias)
-"""
+"""Small helpers shared across the package (mono conversion, analysis windows)."""
 from __future__ import annotations
 
 from typing import Union
@@ -19,7 +9,17 @@ WindowSpec = Union[str, np.ndarray, None]
 
 
 def to_mono(x) -> np.ndarray:
-    """Return a 1-D float array. Multichannel input ``[ch, N]`` is averaged over channels."""
+    """Convert a signal to mono by averaging over channels.
+
+    Args:
+        x: Signal of shape ``[N]`` or ``[ch, N]`` (array-like).
+
+    Returns:
+        Float array of shape ``[N]``.
+
+    Raises:
+        ValueError: If ``x`` is not 1-D or 2-D.
+    """
     x = np.asarray(x, dtype=float)
     if x.ndim == 1:
         return x
@@ -29,7 +29,19 @@ def to_mono(x) -> np.ndarray:
 
 
 def get_window(window: WindowSpec, n: int) -> np.ndarray:
-    """Periodic window of length ``n`` (None / "rect" -> ones)."""
+    """Periodic analysis window.
+
+    Args:
+        window: ``"hann"``, ``"hamming"``, ``"rect"`` or ``None`` (both rectangular), or an array
+            of length ``n``. No default; callers choose (see their own defaults).
+        n: Window length [samples].
+
+    Returns:
+        Float array of shape ``[n]``.
+
+    Raises:
+        ValueError: Unknown window name, or an array whose length is not ``n``.
+    """
     if window is None or (isinstance(window, str) and window == "rect"):
         return np.ones(n)
     if isinstance(window, str):

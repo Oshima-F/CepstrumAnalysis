@@ -20,10 +20,10 @@ def _voiced(n=1024, f0=125.0):
     return x
 
 
-@pytest.mark.parametrize("fn", [cp.analyze_real, cp.analyze_complex, cp.analyze_power])
+@pytest.mark.parametrize("fn", [cp.analyze_real, cp.analyze_power])
 def test_low_plus_high_is_full(fn):
     x = rng.standard_normal(256)
-    r = fn(x, FS, khz_inv=3, n_fft=512) if fn is cp.analyze_complex else fn(x, FS, khz_inv=3)
+    r = fn(x, FS, khz_inv=3)
     np.testing.assert_allclose(r.low.data + r.high.data, r.full.data, atol=1e-12)
 
 
@@ -60,16 +60,10 @@ def test_envelope_and_fine_structure_spectra():
     assert np.std(np.diff(env)) < np.std(np.diff(full))
 
 
-def test_complex_full_reconstruction_and_homomorphic_parts():
-    x = _voiced()
-    r = cp.analyze_complex(x, FS, khz_inv=3, n_fft=2048)
-    np.testing.assert_allclose(r.reconstruct("full"), x, atol=1e-8)
-    lo, hi = r.reconstruct("low"), r.reconstruct("high")
-    # complex cepstra add <-> signals convolve (circularly, n_fft points)
-    assert len(lo) == len(hi) == 2048
-    conv = np.fft.ifft(np.fft.fft(lo) * np.fft.fft(hi)).real
-    np.testing.assert_allclose(conv[: len(x)], x, atol=1e-8)
-    np.testing.assert_allclose(conv[len(x):], 0, atol=1e-8)
+def test_single_cepstrum_cannot_be_reconstructed():
+    r = cp.analyze_real(_voiced(), FS, khz_inv=3)
+    with pytest.raises(ValueError, match="cepstrogram"):
+        r.reconstruct("full")
 
 
 def test_power_has_no_spectrum_or_reconstruction():
@@ -113,9 +107,9 @@ def test_cepstrogram_tracks_gliding_pitch():
 
 def test_cepstrogram_analysis():
     x = _voiced(4096)
-    r = cp.analyze_cepstrogram(x, FS, frame_len=512, hop=128, kind="complex", khz_inv=3)
+    r = cp.analyze_cepstrogram(x, FS, frame_len=512, hop=128, khz_inv=3)
     assert r.low.data.shape == r.full.data.shape
     np.testing.assert_allclose(r.low.data + r.high.data, r.full.data, atol=1e-12)
-    np.testing.assert_allclose(r.reconstruct("full"), x, atol=1e-6)
+    assert r.reconstruct("low").shape == x.shape
     env = r.log_spectrum("low")
     assert env.shape == (257, r.full.data.shape[1])

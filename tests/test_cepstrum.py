@@ -25,23 +25,25 @@ def test_spectrum_input_matches_signal(sided):
         np.testing.assert_allclose(c.data, ref.data, atol=1e-10)
 
 
-def test_complex_cepstrum_needs_phase():
-    spec = cp.Spectrum(np.ones(33), FS, 64, "amplitude", "one")
+def test_phase_is_ignored():
+    x = rng.standard_normal(64)
+    a = cp.cepstrum(x, FS)
+    b = cp.cepstrum(x[::-1].copy(), FS)  # same magnitude spectrum, different phase
+    np.testing.assert_allclose(a.data, b.data, atol=1e-10)
+
+
+def test_real_cepstrum_is_even():
+    c = cp.cepstrum(rng.standard_normal(128), FS)
+    np.testing.assert_allclose(c.data[1:], c.data[1:][::-1], atol=1e-12)
+
+
+def test_complex_kind_is_not_supported():
     with pytest.raises(ValueError):
-        cp.cepstrum(spec, kind="complex")
+        cp.cepstrum(rng.standard_normal(64), FS, kind="complex")
 
 
-@pytest.mark.parametrize("n", [64, 100])
-def test_complex_roundtrip_exact(n):
-    x = rng.standard_normal(n)
-    x[0] = 1.0
-    x = np.roll(x, 5)  # non-trivial delay
-    for sig in (x, -x):  # also negative DC gain
-        c = cp.cepstrum(sig, FS, kind="complex", n_fft=2 * n)
-        np.testing.assert_allclose(cp.reconstruct(c), sig, atol=1e-9)
-
-
-def test_echo_peak_in_real_cepstrum():
+def test_spectral_ripple_gives_a_cepstral_peak_at_its_quefrency():
+    # x plus a copy delayed by d samples has a log-spectrum ripple of period fs/d, i.e. a peak at q = d/fs
     n, d = 2048, 100
     x = rng.standard_normal(n)
     y = x.copy()
@@ -52,11 +54,11 @@ def test_echo_peak_in_real_cepstrum():
     assert c.quefrency[peak] == pytest.approx(d / FS)
 
 
-def test_minimum_phase_real_roundtrip():
-    h = np.zeros(256)
-    h[:3] = [1.0, -0.5, 0.2]  # minimum phase (zeros inside unit circle)
-    c = cp.cepstrum(h, FS, kind="real", n_fft=256)
-    np.testing.assert_allclose(cp.reconstruct(c), h, atol=1e-8)
+def test_unliftered_roundtrip_returns_the_magnitude_spectrum():
+    x = rng.standard_normal(256)
+    c = cp.cepstrum(x, FS)
+    np.testing.assert_allclose(np.exp(np.fft.fft(c.data).real), np.abs(np.fft.fft(x)), rtol=1e-9)
+    np.testing.assert_allclose(np.fft.fft(c.data).imag, 0, atol=1e-10)  # real and even -> real spectrum
 
 
 def test_lowpass_lifter_smooths_log_spectrum():
@@ -69,25 +71,13 @@ def test_lowpass_lifter_smooths_log_spectrum():
     assert np.std(np.diff(ls_sm)) < np.std(np.diff(ls_raw))
 
 
-def test_power_not_invertible():
-    c = cp.cepstrum(rng.standard_normal(64), FS, kind="power")
-    with pytest.raises(ValueError):
-        cp.reconstruct(c)
-
-
-@pytest.mark.parametrize("kind", ["complex", "real"])
+@pytest.mark.parametrize("kind", ["real", "power"])
 def test_cepstrogram_shapes_and_axes(kind):
     x = rng.standard_normal(1000)
     cg = cp.cepstrogram(x, FS, frame_len=128, hop=32, kind=kind)
     assert cg.data.shape[0] == 128
     assert cg.data.shape[1] == len(cg.times)
     assert cg.quefrency.shape == (128,)
-
-
-def test_cepstrogram_complex_roundtrip():
-    x = rng.standard_normal(1000)
-    cg = cp.cepstrogram(x, FS, frame_len=128, hop=32, kind="complex")
-    np.testing.assert_allclose(cp.reconstruct_cepstrogram(cg), x, atol=1e-6)
 
 
 def test_cepstrogram_lifter_applies_per_frame():
@@ -98,3 +88,4 @@ def test_cepstrogram_lifter_applies_per_frame():
     assert np.all(lo.data[20:-20] == 0)
     y = cp.reconstruct_cepstrogram(lo)
     assert y.shape == x.shape
+    assert np.all(np.isfinite(y))

@@ -1,21 +1,4 @@
-"""Average (whole-record) cepstrum: real, complex and power.
-
-Inputs
-    cepstrum(x, fs=None, *, kind, n_fft, window, eps)
-        x       time signal [N] or [ch, N] (channels averaged), or a Spectrum
-        fs      sampling frequency [Hz]; required for time signals, taken from a Spectrum otherwise
-Outputs
-    Cepstrum(data[n_fft], fs, kind, n_fft, delay, sign, length)
-        data        cepstrum indexed by quefrency (negative quefrency wraps to the end)
-        quefrency   signed quefrency axis [s] (= Hz^-1)
-        delay/sign  complex kind only: removed linear-phase delay [samples] and DC sign
-Parameters
-    kind    "real" (IFFT log|X|) | "complex" (log|X| + j*phase; even n_fft, needs phase)
-            | "power" (|IFFT log|X|^2|^2)                       default "real"
-    n_fft   FFT length, >= signal length                        default signal length
-    window  "hann" | "hamming" | "rect" | ndarray | None        default None
-    eps     log floor relative to max|X|                        default 1e-12
-"""
+"""Average (whole-record) cepstrum: real and power."""
 from __future__ import annotations
 
 from dataclasses import dataclass
@@ -24,26 +7,38 @@ from typing import Literal, Optional, Union
 import numpy as np
 
 from .spectrum import Spectrum
-from .utils import WindowSpec, get_window, to_mono
+from .utils import WindowSpec, get_window
+from .validation import check_fs, prepare_signal, warn_if_silent_spectrum
 
-CepKind = Literal["real", "complex", "power"]
+CepKind = Literal["real", "power"]
+
+DB_PER_NEPER = 20 / np.log(10)  # ln|X| -> 20*log10|X|  (= 8.686...)
 
 
 @dataclass(frozen=True)
 class Cepstrum:
-    """Cepstrum ``data[n_fft]`` indexed by quefrency (negative quefrencies wrap to the end).
+    """Cepstrum indexed by quefrency (negative quefrencies wrap to the end).
 
-    ``delay`` / ``sign`` are only meaningful for ``kind="complex"``: the original signal is
-    ``sign * roll(x_min, delay)`` where x_min is the signal rebuilt from ``data``.
+    Normally created by :func:`cepstrum`, not by hand. The cepstrum is real and even
+    (``data[n] == data[-n]``): it is computed from the magnitude spectrum only.
+
+    Args:
+        data: Real array of shape ``[n_fft]``.
+        fs: Sampling frequency [Hz].
+        kind: ``"real"`` or ``"power"``.
+        n_fft: FFT length.
+        length: Length of the original time signal, if known (reconstruction is truncated to
+            it). Default ``None``.
+        db: True if the cepstrum was computed from the log spectrum in dB (``20*log10|X|``)
+            instead of the natural log. Default ``False``.
     """
 
     data: np.ndarray
     fs: float
     kind: CepKind
     n_fft: int
-    delay: int = 0
-    sign: int = 1
-    length: Optional[int] = None  # original signal length, if known
+    length: Optional[int] = None
+    db: bool = False
 
     @property
     def quefrency(self) -> np.ndarray:
@@ -56,22 +51,6 @@ def _log_mag(mag: np.ndarray, eps: float) -> np.ndarray:
     return np.log(np.maximum(mag, floor))
 
 
-def _complex_log_spectrum(full: np.ndarray, eps: float):
-    """log X with unwrapped, linear-phase-removed phase. Returns (logX, delay, sign)."""
-    n = full.shape[0]
-    if n % 2:
-        raise ValueError("complex cepstrum requires an even n_fft")
-    sign = -1 if full[0].real < 0 else 1
-    full = sign * full
-    half = full[: n // 2 + 1]
-    phi = np.unwrap(np.angle(half))
-    r = int(np.round(phi[-1] / np.pi))  # phase at Nyquist = pi * r  ->  delay = -r
-    k = np.arange(n // 2 + 1)
-    phi = phi - np.pi * r * k / (n // 2)
-    phi_full = np.concatenate([phi, -phi[-2:0:-1]])
-    return _log_mag(np.abs(full), eps) + 1j * phi_full, -r, sign
-
-
 def cepstrum(
     x: Union[np.ndarray, Spectrum],
     fs: Optional[float] = None,
@@ -80,35 +59,65 @@ def cepstrum(
     n_fft: Optional[int] = None,
     window: WindowSpec = None,
     eps: float = 1e-12,
+    db: bool = False,
 ) -> Cepstrum:
     """Cepstrum of the whole input with a single FFT.
 
-    ``x`` is a time signal (``[N]`` or ``[ch, N]``, channels averaged) or a :class:`Spectrum`.
+    Only the magnitude spectrum is used; the phase of a complex input is ignored.
+
+    Args:
+        x: Time signal ``[N]`` / ``[ch, N]`` (channels averaged) or a :class:`Spectrum`.
+        fs: Sampling frequency [Hz]. Required for time signals; taken from the
+            :class:`Spectrum` otherwise. Default ``None``.
+        kind: ``"real"`` (IFFT of log|X|) or ``"power"`` (|IFFT of log|X|^2|^2). Default
+            ``"real"``.
+        n_fft: FFT length, at least the signal length. Time signals only. Default: the signal
+            length.
+        window: ``"hann"``, ``"hamming"``, ``"rect"``, an array of the signal length, or ``None``.
+            Time signals only. Default ``None`` (no window).
+        eps: Floor of the log, relative to ``max|X|``. Default ``1e-12``.
+        db: If True, use the log spectrum in dB (``20*log10|X|``) instead of the natural log
+            before the inverse FFT. A real cepstrum is then ``20/ln(10)`` (about 8.686) times
+            larger, and the FFT of it is the log spectrum in dB. For the power cepstrum the
+            squared magnitude of that dB cepstrum is returned. Default ``False`` (natural log).
+
+    Returns:
+        A :class:`Cepstrum`.
+
+    Raises:
+        ValueError: ``fs`` missing or not a finite positive number, ``n_fft`` shorter than the
+            signal, an unknown ``kind``, or an invalid signal (complex, empty, NaN / inf, wrong
+            shape).
+        SilenceWarning: (warning) The signal is digital silence or constant (or the spectrum is
+            all zero).
+        ClippingWarning: (warning) The signal appears clipped. See :mod:`cepstrum.validation`.
     """
+    if kind not in ("real", "power"):
+        raise ValueError(f"unknown kind: {kind!r}; choose 'real' or 'power'")
     length = None
     if isinstance(x, Spectrum):
         spec = x
+        warn_if_silent_spectrum(np.abs(spec.data))
     else:
         if fs is None:
             raise ValueError("fs is required for time-signal input")
-        sig = to_mono(x)
+        fs = check_fs(fs)
+        sig = prepare_signal(x)
         n_fft = len(sig) if n_fft is None else n_fft
         if n_fft < len(sig):
             raise ValueError("n_fft must be >= signal length")
         length = len(sig)
         spec = Spectrum(np.fft.fft(sig * get_window(window, len(sig)), n_fft), fs, n_fft)
+    return _from_spectrum(spec, kind, eps, db, length)
 
-    full = spec.to_two_sided()
+
+def _from_spectrum(spec: Spectrum, kind: CepKind, eps: float, db: bool, length: Optional[int]) -> Cepstrum:
+    """Cepstrum of a :class:`Spectrum` (no validation, no warnings)."""
+    log_mag = _log_mag(np.abs(spec.to_two_sided()), eps)
+    if db:
+        log_mag = log_mag * DB_PER_NEPER  # 20*log10|X|; the power cepstrum then needs no extra factor 2
     if kind == "real":
-        c = np.fft.ifft(_log_mag(np.abs(full), eps)).real
-        return Cepstrum(c, spec.fs, kind, spec.n_fft, length=length)
-    if kind == "power":
-        c = np.abs(np.fft.ifft(2 * _log_mag(np.abs(full), eps))) ** 2
-        return Cepstrum(c, spec.fs, kind, spec.n_fft, length=length)
-    if kind == "complex":
-        if not spec.has_phase:
-            raise ValueError("complex cepstrum needs a complex spectrum (phase)")
-        log_x, delay, sign = _complex_log_spectrum(full, eps)
-        c = np.fft.ifft(log_x).real
-        return Cepstrum(c, spec.fs, kind, spec.n_fft, delay, sign, length)
-    raise ValueError(f"unknown kind: {kind!r}")
+        c = np.fft.ifft(log_mag).real
+    else:
+        c = np.abs(np.fft.ifft(log_mag if db else 2 * log_mag)) ** 2
+    return Cepstrum(c, spec.fs, kind, spec.n_fft, length, db)

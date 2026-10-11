@@ -1,20 +1,8 @@
 """Shared helpers for the example scripts (speech input, figure saving, axes).
 
-Inputs
-    read_wav(path)                          16-bit PCM WAV
-    load_segment(path, start, dur)          mono excerpt of a WAV: start [s], dur [s] (None = to the end)
-    f0_from_cepstrum(c, f0_range)           c: real Cepstrum
-    save(fig, name, out_dir=None)           matplotlib figure -> PNG
-    open_image(path)                        open a PNG in the OS default viewer
-    period_axis(ax, axis="x", periods)      add a ripple-period [Hz] secondary axis
-    to_db(log_mag)                          natural-log magnitude -> dB
-Outputs
-    read_wav -> ([ch, N] float array in [-1, 1], fs); load_segment -> (float ndarray [n], fs)
-    f0_from_cepstrum -> f0 [Hz] of the strongest cepstral peak; save -> Path of the PNG
-Parameters
-    DEFAULT_WAV   speech used by all examples (data/mao.wav; create it with synth_aivis.py)
-    OUT           default output directory (examples/output)
-    QLABEL        axis label for quefrency in kHz^-1
+Module constants: ``DEFAULT_WAV`` (speech used by all examples, data/mao.wav, created with
+synth_aivis.py), ``OUT`` (default output directory, examples/output) and ``QLABEL`` (axis label for
+quefrency in kHz^-1).
 """
 import wave
 from pathlib import Path
@@ -33,7 +21,18 @@ OUT.mkdir(exist_ok=True)
 
 
 def read_wav(path):
-    """16-bit PCM WAV -> ([ch, N] float array in [-1, 1], fs)."""
+    """Read a 16-bit PCM WAV file.
+
+    Args:
+        path: WAV file. Required.
+
+    Returns:
+        Tuple ``(x, fs)``: ``x`` is a float array ``[ch, N]`` in [-1, 1], ``fs`` the sampling
+        frequency [Hz].
+
+    Raises:
+        ValueError: If the file is not 16-bit PCM.
+    """
     with wave.open(str(path)) as w:
         fs, ch, sw = w.getframerate(), w.getnchannels(), w.getsampwidth()
         raw = w.readframes(w.getnframes())
@@ -43,7 +42,19 @@ def read_wav(path):
 
 
 def load_segment(path=DEFAULT_WAV, start=0.0, dur=None):
-    """Mono excerpt (channels averaged) of a WAV file: ``start`` and ``dur`` in seconds."""
+    """Mono excerpt (channels averaged) of a WAV file.
+
+    Args:
+        path: WAV file. Default ``DEFAULT_WAV``.
+        start: Excerpt start [s]. Default 0.0.
+        dur: Excerpt length [s]. Default ``None`` (to the end of the file).
+
+    Returns:
+        Tuple ``(x, fs)``: float array ``[n]`` and the sampling frequency [Hz].
+
+    Raises:
+        FileNotFoundError: If ``path`` does not exist (create it with synth_aivis.py).
+    """
     path = Path(path)
     if not path.exists():
         raise FileNotFoundError(f"{path} not found; create it with synth_aivis.py")
@@ -55,14 +66,26 @@ def load_segment(path=DEFAULT_WAV, start=0.0, dur=None):
 
 
 def f0_from_cepstrum(c, f0_range=(100, 700)):
-    """f0 [Hz] from the strongest peak of a real cepstrum within ``f0_range`` [Hz]."""
+    """Pitch from the strongest peak of a real cepstrum.
+
+    Args:
+        c: A real :class:`cepstrum.Cepstrum`. Required.
+        f0_range: Pitch search range [Hz]. Default ``(100, 700)``.
+
+    Returns:
+        f0 [Hz].
+    """
     q = cp.quefrency_axis(c, "kHz^-1")[: c.n_fft // 2]
     band = (q >= 1000 / f0_range[1]) & (q <= 1000 / f0_range[0])
     return float(1000.0 / q[band][np.argmax(c.data[: c.n_fft // 2][band])])
 
 
 def open_image(path):
-    """Open a saved PNG with the OS default viewer (figures are saved headless, so nothing pops up)."""
+    """Open a saved PNG with the OS default viewer (figures are saved headless, so nothing pops up).
+
+    Args:
+        path: PNG file. Required.
+    """
     import os
     import subprocess
     import sys
@@ -74,7 +97,16 @@ def open_image(path):
 
 
 def save(fig, name, out_dir=None):
-    """Save ``fig`` as ``out_dir/name`` (default ``examples/output``) and return the path."""
+    """Save a matplotlib figure as PNG and close it.
+
+    Args:
+        fig: The figure. Required.
+        name: File name. Required.
+        out_dir: Output directory, created if missing. Default ``None`` (= ``OUT``, examples/output).
+
+    Returns:
+        Path of the PNG.
+    """
     out = Path(out_dir) if out_dir is not None else OUT
     out.mkdir(parents=True, exist_ok=True)
     path = out / name
@@ -94,6 +126,15 @@ def period_axis(ax, axis="x", periods=_PERIODS):
 
     Call after the primary limits are final. Ticks sit at 'round' periods, so the primary
     axis stays linear while the period (spacing in Hz) can be read directly.
+
+    Args:
+        ax: Matplotlib axes whose quefrency axis is in kHz^-1. Required.
+        axis: ``"x"`` (secondary axis on top) or ``"y"`` (on the right). Default ``"x"``.
+        periods: Candidate ripple periods [Hz] for the ticks; crowded ones are thinned out.
+            Default: a built-in list from 2000 to 40 Hz.
+
+    Returns:
+        The secondary axis.
     """
     lim = ax.get_xlim() if axis == "x" else ax.get_ylim()
     lo, hi = min(lim), max(lim)
@@ -111,5 +152,12 @@ def period_axis(ax, axis="x", periods=_PERIODS):
 
 
 def to_db(log_mag):
-    """Natural-log magnitude -> dB."""
+    """Convert a natural-log magnitude to dB.
+
+    Args:
+        log_mag: ln of a magnitude (array-like). Required.
+
+    Returns:
+        ``20 / ln(10) * log_mag``.
+    """
     return 20 / np.log(10) * np.asarray(log_mag)

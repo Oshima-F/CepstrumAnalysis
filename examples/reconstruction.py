@@ -1,15 +1,15 @@
-"""Reconstruction: exact round trip, liftered reconstruction, echo removal, cepstrogram OLA.
+"""Reconstruction from a cepstrogram: low / high quefrency parts as time signals.
 
-Input
-    speech WAV (default data/mao.wav, made by synth_aivis.py): excerpts for (a)-(c), the whole file for (d)
-Output
-    run() -> {"path": PNG with 4 panels (a)-(d), written to OUT_DIR as reconstruction.png,
-              "roundtrip_error": max abs error of (a), "cepstrogram_roundtrip_error": of (d),
-              "echo_corr_before"/"echo_corr_after": correlation with the clean excerpt in (b)}
-    (a) complex-cepstrum round trip  (b) echo removal by notch lifter on the complex cepstrum
-    (artificial echo added to the excerpt)  (c) real cepstrum -> lowpass -> minimum-phase signal
-    (d) complex cepstrogram OLA round trip
-Parameters (edit below, or pass to run())
+Writes reconstruction.png with four panels for a speech WAV (default data/mao.wav, made by
+synth_aivis.py). The time signal is rebuilt as: complex spectrogram X of the original times the gain
+|X_l| / |X| (X_l: the spectrum carried by the liftered cepstrogram), inverse FFT, overlap-add; the
+phase of the original is kept and only the magnitude changes (docs/definitions.md, section 9).
+(a) no lifter: the original signal comes back, (b) the low / high quefrency parts as time signals
+(low + high = original), (c) what the low part is: the frame spectra of the low signal move toward
+the envelope but do not equal it (the phase is the original one, so the reconstructed spectrogram is
+not consistent), and the cepstra of the three signals show where the pitch peak ends up,
+(d) the whole file.
+The settings below are the defaults of run(); edit them here.
 """
 import numpy as np
 
@@ -19,97 +19,110 @@ from _common import DEFAULT_WAV, QLABEL, load_segment, open_image, period_axis, 
 WAV = DEFAULT_WAV
 OUT_DIR = None            # None -> examples/output
 SEG_START = 2.9           # excerpt start [s] for (a)-(c) (a steady vowel in mao.wav)
-# (a) round trip
+FMAX = 8000               # spectrum range shown [Hz]
+ZOOM_MS = 30              # length of the waveform comparisons [ms]
+Q_MAX = 8                 # quefrency range shown in (c) [kHz^-1]
+# (a) round trip without lifter
 A_DURATION = 0.1          # excerpt length [s]
-# (b) echo removal
-ECHO_DELAY, ECHO_GAIN = 0.010, 0.6   # [s], relative amplitude of the added echo
-B_DURATION = 0.1                     # excerpt length [s]
-B_N_FFT = 32768                      # FFT length of the complex cepstrum (>> length + echo delay: less aliasing)
-NOTCH_ORDERS = 7                     # echo harmonics k*delay (k = 1..NOTCH_ORDERS) to remove
-NOTCH_HALFWIDTH = 1.5                # notch half width [samples]
-# (c) envelope from the real cepstrum
-C_DURATION = 0.05
-ENVELOPE_KHZ_INV = 1                 # lowpass cutoff [kHz^-1] (ripples wider than 1 kHz)
-FMAX = 8000                          # spectrum range shown [Hz]
-IR_MS = 10                           # length of the shown minimum-phase impulse response [ms]
-# (d) cepstrogram round trip over the whole file
-FRAME_LEN, HOP = 1024, 256           # [samples]
-D_LOWPASS_KHZ_INV = 1
+A_FRAME_LEN, A_HOP = 1024, 256
+# (b), (c) low / high quefrency parts
+C_DURATION = 0.1          # excerpt length [s]
+C_FRAME_LEN, C_HOP = 2048, 512
+SPLIT_KHZ_INV = 1         # low/high split [kHz^-1] (ripples wider than 1 kHz = envelope)
+# (d) whole file
+D_FRAME_LEN, D_HOP = 1024, 256
 
 
 def run(path=WAV, out_dir=OUT_DIR):
-    """Returns {"path", "roundtrip_error", "cepstrogram_roundtrip_error", "echo_corr_before", "echo_corr_after"}."""
-    # (a) complex cepstrum round trip (no liftering) -> exact
+    """Run the four reconstruction experiments and plot them.
+
+    Args:
+        path: Speech WAV (16-bit PCM). Default ``WAV`` (data/mao.wav).
+        out_dir: Directory for the PNG. Default ``OUT_DIR`` (``None`` = examples/output).
+
+    Returns:
+        Dict with ``"path"`` (the PNG), ``"roundtrip_error"`` (max abs error of (a)),
+        ``"whole_file_roundtrip_error"`` (of (d)) and ``"fine_structure_ratio"`` (rms distance of the
+        re-analysed frame log-spectra of the low signal to the envelope, divided by that of the
+        original; below 1 means the frame spectra moved toward the envelope). The other settings
+        are the module constants above.
+    """
+    # (a) no lifter -> the original signal
     x, fs = load_segment(path, SEG_START, A_DURATION)
-    c = cp.cepstrum(x, fs, kind="complex", n_fft=2 * len(x))
-    xr = cp.reconstruct(c)
-    err_a = np.max(np.abs(x - xr))
+    ya = cp.reconstruct_cepstrogram(cp.cepstrogram(x, fs, frame_len=A_FRAME_LEN, hop=A_HOP))
+    err_a = float(np.max(np.abs(x - ya)))
 
-    # (b) echo removal by notching the echo quefrencies out of the complex cepstrum
-    seg, _ = load_segment(path, SEG_START, B_DURATION)
-    d_s, d = ECHO_DELAY, int(ECHO_DELAY * fs)
-    n = len(seg) + d  # keep the echo tail: the echoed signal must be exactly seg * (1 + g z^-d)
-    src = np.r_[seg, np.zeros(d)]
-    echoed = src.copy()
-    echoed[d:] += ECHO_GAIN * seg
-    ce = cp.cepstrum(echoed, fs, kind="complex", n_fft=B_N_FFT)
+    # (b) low / high quefrency parts as time signals
+    xc, _ = load_segment(path, SEG_START, C_DURATION)
+    rc = cp.analyze_cepstrogram(xc, fs, frame_len=C_FRAME_LEN, hop=C_HOP, khz_inv=SPLIT_KHZ_INV)
+    low, high = rc.reconstruct("low"), rc.reconstruct("high")
 
-    def echo_notch(q):
-        w = np.ones_like(q)
-        for k in range(1, NOTCH_ORDERS + 1):
-            w[np.abs(q - k * d_s) < NOTCH_HALFWIDTH / fs] = 0
-        return w
+    # (c) the frame spectra of the low signal, re-analysed with the same framing
+    half = rc.full.n_fft // 2 + 1
+    ln_env = np.fft.fft(rc.low.data, axis=0).real[:half]                 # target: envelope of every frame
+    ln_x = np.log(np.maximum(np.abs(rc.full.spectrogram), 1e-300))        # original
+    re = cp.cepstrogram(low, fs, frame_len=C_FRAME_LEN, hop=C_HOP)
+    ln_y = np.fft.fft(re.data, axis=0).real[:half]                        # actual, after reconstruction
+    inner = slice(2, -2)                                                  # skip the edge frames
+    dist = lambda ln: float(np.sqrt(np.mean((ln[:, inner] - ln_env[:, inner]) ** 2)))
+    ratio = dist(ln_y) / dist(ln_x)
+    mid = ln_x.shape[1] // 2
+    f = np.fft.rfftfreq(rc.full.n_fft, 1 / fs)
 
-    clean = cp.reconstruct(ce, echo_notch)
-    corr_before, corr_after = (np.corrcoef(a[:n], src)[0, 1] for a in (echoed, clean))
-
-    # (c) real cepstrum, lowpass lifter, minimum-phase reconstruction
-    v, _ = load_segment(path, SEG_START, C_DURATION)
-    cr = cp.cepstrum(v, fs, kind="real", window="hann")
-    env = cp.reconstruct(cr, cp.lowpass(khz_inv=ENVELOPE_KHZ_INV))  # minimum-phase impulse response of the envelope
-
-    # (d) cepstrogram: exact round trip with complex kind over the whole file
+    # (d) whole file
     y, _ = load_segment(path)
-    cg = cp.cepstrogram(y, fs, frame_len=FRAME_LEN, hop=HOP, kind="complex")
-    yr = cp.reconstruct_cepstrogram(cg)
-    y_lp = cp.reconstruct_cepstrogram(cg, cp.lowpass(khz_inv=D_LOWPASS_KHZ_INV))
-    err_d = np.max(np.abs(y - yr))
+    rd = cp.analyze_cepstrogram(y, fs, frame_len=D_FRAME_LEN, hop=D_HOP, khz_inv=SPLIT_KHZ_INV)
+    yd_full, yd_low = rd.reconstruct("full"), rd.reconstruct("low")
+    err_d = float(np.max(np.abs(y - yd_full)))
 
+    zoom = int(ZOOM_MS * 1e-3 * fs)
+    ms = lambda n: np.arange(n) / fs * 1e3
     fig, ax = plt.subplots(4, 2, figsize=(12, 12))
-    t = np.arange(len(x)) / fs * 1e3
-    ax[0, 0].plot(t, x, label="original"); ax[0, 0].plot(t, xr, "--", label="reconstructed")
-    ax[0, 0].set(title=f"(a) complex cepstrum round trip, max err={err_a:.1e}", xlabel="time [ms]"); ax[0, 0].legend()
-    ax[0, 1].semilogy(t, np.abs(x - xr) + 1e-18)
+    ax[0, 0].plot(ms(zoom), x[:zoom], label="original")
+    ax[0, 0].plot(ms(zoom), ya[:zoom], "--", lw=0.8, label="reconstruction")
+    ax[0, 0].set(title=f"(a) no lifter: the original comes back, max err={err_a:.1e}", xlabel="time [ms]")
+    ax[0, 0].legend(fontsize=7)
+    ax[0, 1].semilogy(ms(len(x)), np.abs(x - ya) + 1e-18)
     ax[0, 1].set(title="(a) absolute error", xlabel="time [ms]")
 
-    te = np.arange(n) / fs * 1e3
-    ax[1, 0].plot(te, src, lw=0.8, label="speech"); ax[1, 0].plot(te, echoed, lw=0.6, alpha=0.7, label="with echo")
-    ax[1, 0].plot(te, clean[:n], "--", lw=0.8, label="notch-liftered")
-    ax[1, 0].set(title="(b) echo removal in time domain", xlabel="time [ms]"); ax[1, 0].legend(fontsize=7)
-    qs = np.fft.fftshift(cp.quefrency_axis(ce, "kHz^-1"))
-    ax[1, 1].plot(qs, np.fft.fftshift(ce.data), lw=0.6)
-    ax[1, 1].set(title=f"(b) complex cepstrum; corr with speech {corr_before:.2f} -> {corr_after:.2f}",
-                 xlabel=QLABEL, xlim=(-5, 90))
-    period_axis(ax[1, 1])
+    ax[1, 0].plot(ms(zoom), xc[:zoom], lw=0.9, label="original")
+    ax[1, 0].plot(ms(zoom), low[:zoom], lw=0.8, label="low part (envelope magnitude)")
+    ax[1, 0].plot(ms(zoom), high[:zoom], lw=0.6, alpha=0.8, label="high part = original - low")
+    ax[1, 0].set(title=f"(b) low / high split at {SPLIT_KHZ_INV} kHz$^{{-1}}$ as time signals", xlabel="time [ms]")
+    ax[1, 0].legend(fontsize=7)
+    fc = np.fft.rfftfreq(len(xc), 1 / fs)
+    for sig, name, kw in ((xc, "original", {"color": "0.6", "lw": 1.2}), (low, "low", {"color": "r", "lw": 0.8}),
+                          (high, "high", {"color": "C0", "lw": 0.5, "alpha": 0.7})):
+        ax[1, 1].plot(fc, to_db(np.log(np.abs(np.fft.rfft(sig * np.hanning(len(sig)))) + 1e-12)), label=name, **kw)
+    ax[1, 1].set(title="(b) long-window spectra of the three signals", xlabel="frequency [Hz]", ylabel="dB",
+                 xlim=(0, FMAX), ylim=(-80, 40))
+    ax[1, 1].legend(fontsize=7)
 
-    f = np.fft.rfftfreq(len(v), 1 / fs)
-    ax[2, 0].plot(f, to_db(np.log(np.abs(np.fft.rfft(v * np.hanning(len(v)))) + 1e-12)), color="0.6", label="original")
-    ax[2, 0].plot(f, to_db(np.log(np.abs(np.fft.rfft(env, len(v))) + 1e-12)), "r", label="reconstructed envelope")
-    ax[2, 0].set(title=f"(c) real cepstrum, lowpass {ENVELOPE_KHZ_INV} kHz$^{{-1}}$, min-phase rebuild (spectrum)",
+    ax[2, 0].plot(f, to_db(ln_x[:, mid]), color="0.6", lw=0.8, label="original |X|")
+    ax[2, 0].plot(f, to_db(ln_env[:, mid]), "r", lw=1.6, label="target: envelope |X_l|")
+    ax[2, 0].plot(f, to_db(ln_y[:, mid]), "C0", lw=0.8, label="re-analysed low signal")
+    ax[2, 0].set(title=f"(c) one frame: spectrum moves toward the envelope (distance ratio {ratio:.2f})",
                  xlabel="frequency [Hz]", ylabel="dB", xlim=(0, FMAX))
-    ax[2, 0].legend()
-    k = int(IR_MS * 1e-3 * fs)
-    ax[2, 1].plot(np.arange(k) / fs * 1e3, env[:k])
-    ax[2, 1].set(title="(c) min-phase envelope impulse response", xlabel="time [ms]")
+    ax[2, 0].legend(fontsize=7)
+    for sig, name, kw in ((xc, "original", {"color": "0.6", "lw": 1.4}), (low, "low signal", {"color": "r", "lw": 0.8}),
+                          (high, "high signal", {"color": "C0", "lw": 0.6, "alpha": 0.8})):
+        c = cp.cepstrum(sig, fs, window="hann")
+        q = cp.quefrency_axis(c, "kHz^-1")[: c.n_fft // 2]
+        m = (q > 0.5) & (q < Q_MAX)
+        ax[2, 1].plot(q[m], c.data[: c.n_fft // 2][m], label=name, **kw)
+    ax[2, 1].set(title="(c) cepstra of the three signals: the pitch peak is in the high signal", xlabel=QLABEL)
+    ax[2, 1].legend(fontsize=7)
+    period_axis(ax[2, 1])
 
     ty = np.arange(len(y)) / fs
-    ax[3, 0].plot(ty, y, label="original"); ax[3, 0].plot(ty, yr, "--", lw=0.8, label="OLA reconstruction")
-    ax[3, 0].set(title=f"(d) cepstrogram round trip, max err={err_d:.1e}", xlabel="time [s]"); ax[3, 0].legend()
-    ax[3, 1].plot(ty, y_lp, lw=0.8)
-    ax[3, 1].set(title=f"(d) cepstrogram lowpass ({D_LOWPASS_KHZ_INV} kHz$^{{-1}}$) reconstruction", xlabel="time [s]")
-    return {"path": save(fig, "reconstruction.png", out_dir), "roundtrip_error": float(err_a),
-            "cepstrogram_roundtrip_error": float(err_d),
-            "echo_corr_before": float(corr_before), "echo_corr_after": float(corr_after)}
+    ax[3, 0].plot(ty, y, lw=0.4, label="original")
+    ax[3, 0].plot(ty, yd_full, "--", lw=0.3, label="reconstruction (no lifter)")
+    ax[3, 0].set(title=f"(d) whole file round trip, max err={err_d:.1e}", xlabel="time [s]")
+    ax[3, 0].legend(fontsize=7)
+    ax[3, 1].plot(ty, yd_low, lw=0.4)
+    ax[3, 1].set(title=f"(d) low part ({SPLIT_KHZ_INV} kHz$^{{-1}}$): envelope magnitude, original phase", xlabel="time [s]")
+    return {"path": save(fig, "reconstruction.png", out_dir), "roundtrip_error": err_a,
+            "whole_file_roundtrip_error": err_d, "fine_structure_ratio": ratio}
 
 
 if __name__ == "__main__":

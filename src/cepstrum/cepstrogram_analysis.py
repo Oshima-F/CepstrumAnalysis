@@ -1,20 +1,4 @@
-"""Short-time cepstrum (cepstrogram) analysis with low / high quefrency parts.
-
-Inputs
-    x       time signal [N] / [ch, N] (channels averaged)
-    fs      sampling frequency [Hz]
-Outputs
-    Decomposition: full / low / high Cepstrogram objects [quefrency, frame];
-    log_spectrum(part) -> [freq, frame] dB, freqs [Hz], reconstruct(part) -> overlap-add signal
-Parameters
-    frame_len   frame length [samples]                                        required
-    hop         frame shift [samples]                                         default frame_len // 4
-    window      "hann" | "hamming" | "rect" | ndarray                         default "hann"
-    n_fft       FFT length, >= frame_len (even for complex)                   default frame_len
-    kind        "real" | "complex" | "power"                                  default "real"
-    lifter | cutoff | khz_inv | period_hz   split point, at most one form     default none (no split)
-    eps         log floor relative to max|X|                                  default 1e-12
-"""
+"""Short-time cepstrum (cepstrogram) analysis with low / high quefrency parts."""
 from __future__ import annotations
 
 from typing import Optional
@@ -42,12 +26,45 @@ def analyze_cepstrogram(
     khz_inv: Optional[float] = None,
     period_hz: Optional[float] = None,
     eps: float = 1e-12,
+    db: bool = False,
+    store_spectrogram: bool = True,
 ) -> Decomposition[Cepstrogram]:
-    """Cepstrogram ``[quefrency, frame]`` of ``x`` (``[N]`` or ``[ch, N]``) split at a lifter.
+    """Cepstrogram ``[quefrency, frame]`` of a signal, split at a lifter.
 
-    ``kind`` is "real", "complex" or "power". Lifter arguments are as in :func:`analyze_real` and apply
-    to every frame. ``Decomposition.log_spectrum(part)`` gives a ``[freq, frame]`` spectrogram in dB
-    (``low`` = envelope spectrogram), and ``reconstruct(part)`` overlap-adds the frames back to a signal.
+    The same lifter is applied to every frame. ``log_spectrum(part)`` of the result gives a
+    ``[freq, frame]`` spectrogram in dB (``low`` = envelope spectrogram), and ``reconstruct(part)``
+    returns a time signal: the original complex spectrogram times the gain ``|X_l| / |X|``,
+    overlap-added (the original phase is kept; ``"full"`` is the original signal).
+
+    Args:
+        x: Time signal ``[N]`` or ``[ch, N]`` (channels averaged). Required.
+        fs: Sampling frequency [Hz]. Required.
+        frame_len: Frame length [samples]. Required (keyword-only).
+        hop: Frame shift [samples]. Default ``frame_len // 4``.
+        window: ``"hann"``, ``"hamming"``, ``"rect"`` or an array of length ``frame_len``.
+            Default ``"hann"``.
+        n_fft: FFT length, at least ``frame_len``. Default ``frame_len``.
+        kind: ``"real"`` or ``"power"``. Default ``"real"``.
+        lifter: Callable of signed quefrency [s], or weight array of length ``n_fft``, defining
+            the low part. Default ``None``.
+        cutoff: Lowpass cutoff [s = Hz^-1], instead of ``lifter``. Default ``None``.
+        khz_inv: Lowpass cutoff [kHz^-1], instead of ``lifter``. Default ``None``.
+        period_hz: Lowpass cutoff as a ripple period [Hz], instead of ``lifter``. Default ``None``.
+            Give at most one of ``lifter`` / ``cutoff`` / ``khz_inv`` / ``period_hz``; with none,
+            ``low`` is the full cepstrogram and ``high`` is zero.
+        eps: Floor of the log, relative to the per-frame ``max|X|``. Default ``1e-12``.
+        db: If True, compute from the log spectrum in dB (``20*log10|X|``) instead of the
+            natural log (see :func:`cepstrum`). Default ``False``.
+        store_spectrogram: Keep the complex spectrogram (needed by ``reconstruct``). Default
+            ``True``.
+
+    Returns:
+        A :class:`Decomposition` whose parts are :class:`Cepstrogram` objects.
+
+    Raises:
+        ValueError: ``n_fft < frame_len``, an unknown ``kind``, or an invalid lifter
+            specification.
     """
-    full = cepstrogram(x, fs, frame_len=frame_len, hop=hop, window=window, n_fft=n_fft, kind=kind, eps=eps)
+    full = cepstrogram(x, fs, frame_len=frame_len, hop=hop, window=window, n_fft=n_fft, kind=kind, eps=eps, db=db,
+                       store_spectrogram=store_spectrogram)
     return split(full, make_lifter(lifter, cutoff, khz_inv, period_hz))

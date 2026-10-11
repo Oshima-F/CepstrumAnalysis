@@ -18,3 +18,5 @@ where = ["src"]
 
 [tool.pytest.ini_options]
 testpaths = ["tests"]
+# an unexpected silence / clipping warning in a test is a failure (tests that expect one use pytest.warns)
+filterwarnings = ["error::cepstrum.validation.CepstrumWarning"]

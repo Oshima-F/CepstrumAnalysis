@@ -1,17 +1,4 @@
-"""Power cepstrum analysis: |IFFT(log|X|^2)|^2 plus low / high quefrency parts.
-
-Inputs
-    x       time signal [N] / [ch, N] (channels averaged), or Spectrum (complex/amplitude/power)
-    fs      sampling frequency [Hz] (time signals only)
-Outputs
-    Decomposition: full / low / high Cepstrum objects (kind "power"); not invertible, so
-    log_spectrum / reconstruct raise ValueError
-Parameters
-    lifter | cutoff | khz_inv | period_hz   split point, at most one form    default none (no split)
-    n_fft    FFT length                                                       default signal length
-    window   "hann" | "hamming" | "rect" | ndarray | None                     default None
-    eps      log floor relative to max|X|                                     default 1e-12
-"""
+"""Power cepstrum analysis: |IFFT(log|X|^2)|^2 plus low / high quefrency parts."""
 from __future__ import annotations
 
 from typing import Optional, Union
@@ -36,11 +23,40 @@ def analyze_power(
     n_fft: Optional[int] = None,
     window: WindowSpec = None,
     eps: float = 1e-12,
+    db: bool = False,
 ) -> Decomposition[Cepstrum]:
-    """Power cepstrum split at a lifter (detection of periodic structure, e.g. echoes / harmonics).
+    """Power cepstrum, split at a lifter.
 
-    The power cepstrum is not invertible, so ``log_spectrum`` and ``reconstruct`` raise ``ValueError``.
-    Lifter arguments are as in :func:`analyze_real`.
+    The power cepstrum is not invertible, so ``log_spectrum`` and ``reconstruct`` of the result
+    raise ``ValueError``.
+
+    Args:
+        x: Time signal ``[N]`` / ``[ch, N]`` (channels averaged) or a :class:`Spectrum`
+            (complex/amplitude/power, one/two-sided). Required.
+        fs: Sampling frequency [Hz]. Required for time signals; taken from the
+            :class:`Spectrum` otherwise. Default ``None``.
+        lifter: Callable of signed quefrency [s], or weight array of length ``n_fft``, defining
+            the low part. Default ``None``.
+        cutoff: Lowpass cutoff [s = Hz^-1], instead of ``lifter``. Default ``None``.
+        khz_inv: Lowpass cutoff [kHz^-1], instead of ``lifter``. Default ``None``.
+        period_hz: Lowpass cutoff as a ripple period [Hz], instead of ``lifter``. Default ``None``.
+            Give at most one of ``lifter`` / ``cutoff`` / ``khz_inv`` / ``period_hz``; with none,
+            ``low`` is the full cepstrum and ``high`` is zero.
+        n_fft: FFT length, at least the signal length (time signals only). Default: the signal
+            length.
+        window: ``"hann"``, ``"hamming"``, ``"rect"``, an array, or ``None`` (time signals only).
+            Default ``None``.
+        eps: Floor of the log, relative to ``max|X|``. Default ``1e-12``.
+        db: If True, use the log spectrum in dB (``20*log10|X|``) before the inverse FFT; the
+            squared magnitude of that dB cepstrum is returned (see :func:`cepstrum`). Default
+            ``False``.
+
+    Returns:
+        A :class:`Decomposition` of kind ``"power"``.
+
+    Raises:
+        ValueError: Invalid lifter specification, missing ``fs``, or ``n_fft`` shorter than the
+            signal.
     """
-    full = cepstrum(x, fs, kind="power", n_fft=n_fft, window=window, eps=eps)
+    full = cepstrum(x, fs, kind="power", n_fft=n_fft, window=window, eps=eps, db=db)
     return split(full, make_lifter(lifter, cutoff, khz_inv, period_hz))

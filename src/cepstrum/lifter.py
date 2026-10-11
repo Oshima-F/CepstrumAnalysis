@@ -2,21 +2,7 @@
 
 Quefrency arguments can be given in seconds (= Hz^-1) positionally, or by keyword as
 ``khz_inv`` (kHz^-1, = ms numerically) or ``period_hz`` (ripple period in Hz, = 1/quefrency).
-
-Inputs
-    lowpass(cutoff | khz_inv= | period_hz=)       one value; keep |q| <= cutoff
-    highpass(cutoff | khz_inv= | period_hz=)      one value; keep |q| >= cutoff (drops c[0])
-    bandpass(low, high | khz_inv=(a,b) | period_hz=(a,b))
-    notch(center | khz_inv= | period_hz=, width | width_khz_inv=)
-    apply_lifter(ceps, lifter)    ceps: Cepstrum or Cepstrogram; lifter: callable(signed q [s]) or
-                                  ndarray[n_fft]
-    lifter_weights(lifter, n_fft, fs)
-Outputs
-    lowpass/highpass/bandpass/notch -> callable(q [s]) -> 0/1 weights (exactly one unit form allowed)
-    apply_lifter                    -> new Cepstrum / Cepstrogram (data * weights)
-    lifter_weights                  -> ndarray [n_fft]
-Parameters
-    none beyond the arguments above
+Exactly one form must be given; none of the lifter builders has a default value.
 """
 from __future__ import annotations
 
@@ -34,21 +20,58 @@ T = TypeVar("T")
 
 def lowpass(cutoff: Optional[float] = None, *, khz_inv: Optional[float] = None,
             period_hz: Optional[float] = None) -> LifterFn:
-    """Keep |q| <= cutoff: smooth envelope. ``period_hz=300`` keeps ripples wider than 300 Hz."""
+    """Lowpass lifter: keep ``|q| <= cutoff`` (smooth envelope).
+
+    Args:
+        cutoff: Cutoff quefrency [s = Hz^-1].
+        khz_inv: Cutoff in kHz^-1 (alternative to ``cutoff``).
+        period_hz: Cutoff as a ripple period [Hz]; ``period_hz=300`` keeps ripples wider than 300 Hz.
+
+    Returns:
+        Callable mapping signed quefrency [s] to 0/1 weights.
+
+    Raises:
+        ValueError: If not exactly one of the three arguments is given.
+    """
     c = float(to_seconds(cutoff, khz_inv=khz_inv, period_hz=period_hz))
     return lambda q: (np.abs(q) <= c).astype(float)
 
 
 def highpass(cutoff: Optional[float] = None, *, khz_inv: Optional[float] = None,
              period_hz: Optional[float] = None) -> LifterFn:
-    """Keep |q| >= cutoff: fine structure (pitch/harmonics). Removes c[0]."""
+    """Highpass lifter: keep ``|q| >= cutoff`` (fine structure, e.g. pitch). Removes c[0].
+
+    Args:
+        cutoff: Cutoff quefrency [s = Hz^-1].
+        khz_inv: Cutoff in kHz^-1 (alternative to ``cutoff``).
+        period_hz: Cutoff as a ripple period [Hz] (alternative to ``cutoff``).
+
+    Returns:
+        Callable mapping signed quefrency [s] to 0/1 weights.
+
+    Raises:
+        ValueError: If not exactly one of the three arguments is given.
+    """
     c = float(to_seconds(cutoff, khz_inv=khz_inv, period_hz=period_hz))
     return lambda q: (np.abs(q) >= c).astype(float)
 
 
 def bandpass(low: Optional[float] = None, high: Optional[float] = None, *,
              khz_inv: Optional[tuple] = None, period_hz: Optional[tuple] = None) -> LifterFn:
-    """Keep low <= |q| <= high. By keyword pass a pair, e.g. ``period_hz=(150, 100)`` (either order)."""
+    """Bandpass lifter: keep ``low <= |q| <= high``.
+
+    Args:
+        low: Lower quefrency edge [s].
+        high: Upper quefrency edge [s]. Give ``low`` and ``high`` together, or one keyword pair.
+        khz_inv: Pair of edges in kHz^-1, e.g. ``(6, 10)`` (either order).
+        period_hz: Pair of edges as ripple periods [Hz], e.g. ``(150, 100)`` (either order).
+
+    Returns:
+        Callable mapping signed quefrency [s] to 0/1 weights.
+
+    Raises:
+        ValueError: If the forms are mixed, incomplete, or the keyword value is not a pair.
+    """
     if low is not None or high is not None:
         if khz_inv is not None or period_hz is not None or low is None or high is None:
             raise ValueError("give both low and high in seconds, or one keyword pair")
@@ -64,14 +87,40 @@ def bandpass(low: Optional[float] = None, high: Optional[float] = None, *,
 def notch(center: Optional[float] = None, width: Optional[float] = None, *,
           khz_inv: Optional[float] = None, period_hz: Optional[float] = None,
           width_khz_inv: Optional[float] = None) -> LifterFn:
-    """Remove |q| within ``width``/2 of ``center`` (width: seconds or ``width_khz_inv``)."""
+    """Notch lifter: remove ``|q|`` within ``width / 2`` of ``center`` (a narrow band of the cepstrum).
+
+    Args:
+        center: Centre quefrency [s].
+        width: Full width [s].
+        khz_inv: Centre in kHz^-1 (alternative to ``center``).
+        period_hz: Centre as a ripple period [Hz] (alternative to ``center``).
+        width_khz_inv: Full width in kHz^-1 (alternative to ``width``).
+
+    Returns:
+        Callable mapping signed quefrency [s] to 0/1 weights.
+
+    Raises:
+        ValueError: If not exactly one centre form and one width form are given.
+    """
     c = float(to_seconds(center, khz_inv=khz_inv, period_hz=period_hz))
     w = float(to_seconds(width, khz_inv=width_khz_inv))
     return lambda q: (np.abs(np.abs(q) - c) > w / 2).astype(float)
 
 
 def lifter_weights(lifter: Lifter, n_fft: int, fs: float) -> np.ndarray:
-    """Evaluate a lifter (callable of signed quefrency [s], or array of length n_fft)."""
+    """Evaluate a lifter on the quefrency grid of an ``n_fft``-point cepstrum.
+
+    Args:
+        lifter: Callable of signed quefrency [s], or weight array of length ``n_fft``.
+        n_fft: FFT length of the cepstrum.
+        fs: Sampling frequency [Hz].
+
+    Returns:
+        Float array of shape ``[n_fft]``.
+
+    Raises:
+        ValueError: If the weights do not have shape ``[n_fft]``.
+    """
     if callable(lifter):
         q = np.fft.fftfreq(n_fft) * n_fft / fs
         w = np.asarray(lifter(q), dtype=float)
@@ -83,7 +132,16 @@ def lifter_weights(lifter: Lifter, n_fft: int, fs: float) -> np.ndarray:
 
 
 def apply_lifter(ceps: T, lifter: Lifter) -> T:
-    """Multiply a :class:`Cepstrum` or :class:`Cepstrogram` by a lifter (returns a new object)."""
+    """Multiply a cepstrum by a lifter.
+
+    Args:
+        ceps: A :class:`Cepstrum` or :class:`Cepstrogram`.
+        lifter: Callable of signed quefrency [s], or weight array of length ``n_fft``.
+
+    Returns:
+        A new object of the same type with ``data`` multiplied by the weights (on every frame,
+        for a cepstrogram).
+    """
     w = lifter_weights(lifter, ceps.n_fft, ceps.fs)
     w = w[:, None] if ceps.data.ndim == 2 else w
     return replace(ceps, data=ceps.data * w)

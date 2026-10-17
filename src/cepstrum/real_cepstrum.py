@@ -57,5 +57,5 @@ def analyze_real(
         ValueError: Invalid lifter specification, missing ``fs``, or ``n_fft`` shorter than the
             signal.
     """
-    full = cepstrum(x, fs, kind="real", n_fft=n_fft, window=window, eps=eps, db=db)
+    full = cepstrum(x, fs, n_fft=n_fft, window=window, eps=eps, db=db)
     return split(full, make_lifter(lifter, cutoff, khz_inv, period_hz))

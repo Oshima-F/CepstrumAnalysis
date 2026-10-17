@@ -1,4 +1,5 @@
-"""Input validation: errors for invalid input, warnings for suspicious signals (silence, clipping).
+"""Input validation: errors for invalid input, warnings for suspicious signals (silence, clipping) and for
+window / shift settings that cannot reconstruct the signal.
 
 The warnings are subclasses of ``UserWarning``, so they can be silenced or turned into errors with
 the standard ``warnings`` machinery::
@@ -27,6 +28,10 @@ class SilenceWarning(CepstrumWarning):
 
 class ClippingWarning(CepstrumWarning):
     """The signal appears clipped (runs of samples stuck at its extreme value)."""
+
+
+class ReconstructionWarning(CepstrumWarning):
+    """The window and shift leave samples with zero window energy, so they cannot be reconstructed."""
 
 
 def check_fs(fs) -> float:

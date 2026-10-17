@@ -39,7 +39,9 @@ def lowpass(cutoff: Optional[float] = None, *, khz_inv: Optional[float] = None,
 
 def highpass(cutoff: Optional[float] = None, *, khz_inv: Optional[float] = None,
              period_hz: Optional[float] = None) -> LifterFn:
-    """Highpass lifter: keep ``|q| >= cutoff`` (fine structure, e.g. pitch). Removes c[0].
+    """Highpass lifter: keep ``|q| > cutoff`` (fine structure, e.g. pitch). Removes c[0].
+
+    The complement of :func:`lowpass` with the same cutoff: the cutoff bin belongs to the low side.
 
     Args:
         cutoff: Cutoff quefrency [s = Hz^-1].
@@ -53,12 +55,15 @@ def highpass(cutoff: Optional[float] = None, *, khz_inv: Optional[float] = None,
         ValueError: If not exactly one of the three arguments is given.
     """
     c = float(to_seconds(cutoff, khz_inv=khz_inv, period_hz=period_hz))
-    return lambda q: (np.abs(q) >= c).astype(float)
+    return lambda q: (np.abs(q) > c).astype(float)
 
 
 def bandpass(low: Optional[float] = None, high: Optional[float] = None, *,
              khz_inv: Optional[tuple] = None, period_hz: Optional[tuple] = None) -> LifterFn:
-    """Bandpass lifter: keep ``low <= |q| <= high``.
+    """Bandpass lifter: keep ``low < |q| <= high``.
+
+    Equal to ``highpass(low)`` times ``lowpass(high)``: like the low / high split, an edge bin belongs to the
+    lower-quefrency side.
 
     Args:
         low: Lower quefrency edge [s].
@@ -81,7 +86,7 @@ def bandpass(low: Optional[float] = None, high: Optional[float] = None, *,
         if pair.shape != (2,):
             raise ValueError("keyword form needs a pair")
         lo, hi = float(pair.min()), float(pair.max())
-    return lambda q: ((np.abs(q) >= lo) & (np.abs(q) <= hi)).astype(float)
+    return lambda q: ((np.abs(q) > lo) & (np.abs(q) <= hi)).astype(float)
 
 
 def notch(center: Optional[float] = None, width: Optional[float] = None, *,

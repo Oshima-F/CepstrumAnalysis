@@ -1,5 +1,4 @@
 import numpy as np
-import pytest
 
 import cepstrum as cp
 
@@ -30,13 +29,6 @@ def test_fft_of_db_cepstrum_is_the_db_spectrum():
     np.testing.assert_allclose(np.fft.fft(cd.data).real, expected, atol=1e-8)
 
 
-def test_power_cepstrum_db():
-    x = _x()
-    p, pd = cp.cepstrum(x, FS, kind="power"), cp.cepstrum(x, FS, kind="power", db=True)
-    # |IFFT(20 log10|X|)|^2 vs |IFFT(2 ln|X|)|^2: the amplitudes differ by (20/ln10) / 2
-    np.testing.assert_allclose(pd.data, (DB / 2) ** 2 * p.data, rtol=1e-9, atol=1e-12)
-
-
 def test_log_spectrum_is_in_db_either_way():
     x = _x(1024)
     a = cp.analyze_real(x, FS, window="hann", khz_inv=3)
@@ -50,14 +42,12 @@ def test_low_plus_high_is_full_in_db():
     np.testing.assert_allclose(r.low.data + r.high.data, r.full.data, atol=1e-12)
 
 
-@pytest.mark.parametrize("kind", ["real", "power"])
-def test_cepstrogram_db(kind):
+def test_cepstrogram_db():
     x = _x(2000)
-    g = cp.cepstrogram(x, FS, frame_len=256, hop=64, kind=kind)
-    gd = cp.cepstrogram(x, FS, frame_len=256, hop=64, kind=kind, db=True)
+    g = cp.cepstrogram(x, FS, frame_len=256, hop=64)
+    gd = cp.cepstrogram(x, FS, frame_len=256, hop=64, db=True)
     assert gd.db is True and g.db is False
-    factor = DB if kind == "real" else (DB / 2) ** 2
-    np.testing.assert_allclose(gd.data, factor * g.data, rtol=1e-9, atol=1e-11)
+    np.testing.assert_allclose(gd.data, DB * g.data, rtol=1e-9, atol=1e-11)
 
 
 def test_cepstrogram_reconstruction_is_the_same_either_way():

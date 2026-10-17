@@ -7,18 +7,19 @@ frame's spectrum ``X`` is multiplied by the gain ``|X_l| / |X|`` (= ``sqrt(P_l /
 """
 from __future__ import annotations
 
+import warnings
 from dataclasses import dataclass
 from typing import Optional
 
 import numpy as np
 
-from .core import DB_PER_NEPER, CepKind, _from_spectrum
+from .core import DB_PER_NEPER, _from_spectrum
 from .lifter import Lifter, apply_lifter
 from .spectrum import Spectrum
 from .utils import WindowSpec, get_window
-from .validation import check_fs, prepare_signal
+from .validation import ReconstructionWarning, check_fs, prepare_signal
 
-_GAIN_FLOOR = 1e-12  # relative to the frame's peak magnitude; matches the default ``eps`` of the cepstrum
+_ENV_FLOOR = 1e-8  # overlap-add normalisation: samples whose sum of squared windows is below this are uncovered
 
 
 @dataclass(frozen=True)
@@ -30,7 +31,6 @@ class Cepstrogram:
     Args:
         data: Array of shape ``[n_fft, n_frames]`` (quefrency x frame).
         fs: Sampling frequency [Hz].
-        kind: ``"real"`` or ``"power"``.
         n_fft: FFT length.
         frame_len: Frame length [samples].
         hop: Frame shift [samples].
@@ -42,11 +42,13 @@ class Cepstrogram:
         spectrogram: Complex one-sided spectrogram ``[n_fft // 2 + 1, n_frames]`` of the windowed
             frames (the original, not liftered), kept for reconstruction. ``None`` if it was not
             stored. Default ``None``.
+        eps: Floor of the log, relative to the per-frame ``max|X|``; reconstruction floors the
+            gain denominator ``|X|`` at the same level, so the gain is 1 without a lifter. Default
+            ``1e-12``.
     """
 
     data: np.ndarray
     fs: float
-    kind: CepKind
     n_fft: int
     frame_len: int
     hop: int
@@ -55,6 +57,7 @@ class Cepstrogram:
     pad: int
     db: bool = False
     spectrogram: Optional[np.ndarray] = None
+    eps: float = 1e-12
 
     @property
     def quefrency(self) -> np.ndarray:
@@ -75,7 +78,6 @@ def cepstrogram(
     hop: Optional[int] = None,
     window: WindowSpec = "hann",
     n_fft: Optional[int] = None,
-    kind: CepKind = "real",
     eps: float = 1e-12,
     db: bool = False,
     store_spectrogram: bool = True,
@@ -93,7 +95,6 @@ def cepstrogram(
         window: ``"hann"``, ``"hamming"``, ``"rect"`` or an array of length ``frame_len``.
             Default ``"hann"``.
         n_fft: FFT length, at least ``frame_len``. Default ``frame_len``.
-        kind: ``"real"`` or ``"power"``. Default ``"real"``.
         eps: Floor of the log, relative to the per-frame ``max|X|``. Default ``1e-12``.
         db: If True, compute from the log spectrum in dB (``20*log10|X|``) instead of the
             natural log (see :func:`cepstrum`). Default ``False``.
@@ -105,14 +106,12 @@ def cepstrogram(
 
     Raises:
         ValueError: ``fs`` not a finite positive number, ``frame_len < 1``, ``hop`` outside
-            ``1 .. frame_len``, ``n_fft < frame_len``, an unknown ``kind``, or an invalid signal
-            (complex, empty, NaN / inf, wrong shape).
+            ``1 .. frame_len``, ``n_fft < frame_len``, or an invalid signal (complex,
+            empty, NaN / inf, wrong shape).
         SilenceWarning: (warning) The whole signal is digital silence or constant. Silent
             frames inside a longer signal (pauses) are normal and do not warn.
         ClippingWarning: (warning) The signal appears clipped.
     """
-    if kind not in ("real", "power"):
-        raise ValueError(f"unknown kind: {kind!r}; choose 'real' or 'power'")
     fs = check_fs(fs)
     if frame_len < 1:
         raise ValueError("frame_len must be >= 1")
@@ -133,12 +132,12 @@ def cepstrogram(
     cols, specs = [], []
     for i in range(n_frames):
         spectrum = np.fft.fft(padded[i * hop:i * hop + frame_len] * win, n_fft)
-        cols.append(_from_spectrum(Spectrum(spectrum, fs, n_fft), kind, eps, db, frame_len).data)
+        cols.append(_from_spectrum(Spectrum(spectrum, fs, n_fft), eps, db, frame_len).data)
         if store_spectrogram:
             specs.append(spectrum[: n_fft // 2 + 1])
     spectrogram = np.stack(specs, axis=1) if store_spectrogram else None
-    return Cepstrogram(np.stack(cols, axis=1), fs, kind, n_fft, frame_len, hop, win, len(sig), pad, db,
-                       spectrogram)
+    return Cepstrogram(np.stack(cols, axis=1), fs, n_fft, frame_len, hop, win, len(sig), pad, db,
+                       spectrogram, eps)
 
 
 def reconstruct_cepstrogram(cg: Cepstrogram, lifter: Optional[Lifter] = None) -> np.ndarray:
@@ -160,11 +159,11 @@ def reconstruct_cepstrogram(cg: Cepstrogram, lifter: Optional[Lifter] = None) ->
         Float array of the original signal length.
 
     Raises:
-        ValueError: For ``kind="power"`` (not invertible), or if the cepstrogram was made with
-            ``store_spectrogram=False``.
+        ValueError: If the cepstrogram was made with ``store_spectrogram=False``.
+        ReconstructionWarning: (warning) Some samples get no window energy
+            (``sum_j w[n - t_j]^2 = 0``, e.g. a Hann window with ``hop == frame_len``); they cannot be
+            reconstructed and come out as (about) 0.
     """
-    if cg.kind == "power":
-        raise ValueError("a power cepstrogram is not invertible")
     if cg.spectrogram is None:
         raise ValueError("this cepstrogram holds no complex spectrogram (store_spectrogram=False); "
                          "the phase needed for reconstruction is missing")
@@ -176,7 +175,7 @@ def reconstruct_cepstrogram(cg: Cepstrogram, lifter: Optional[Lifter] = None) ->
         log_mag = log_mag / DB_PER_NEPER
     spec = cg.spectrogram
     mag = np.abs(spec)
-    floor = np.maximum(_GAIN_FLOOR * mag.max(axis=0, keepdims=True), np.finfo(float).tiny)
+    floor = np.maximum(cg.eps * mag.max(axis=0, keepdims=True), np.finfo(float).tiny)
     gain = np.exp(log_mag) / np.maximum(mag, floor)
     frames = np.fft.irfft(spec * gain, n=cg.n_fft, axis=0)[: cg.frame_len]
 
@@ -190,4 +189,8 @@ def reconstruct_cepstrogram(cg: Cepstrogram, lifter: Optional[Lifter] = None) ->
         env[s:s + cg.frame_len] += cg.window ** 2
     out = out[cg.pad:cg.pad + cg.length]
     env = env[cg.pad:cg.pad + cg.length]
-    return out / np.maximum(env, 1e-8)
+    uncovered = int(np.count_nonzero(env < _ENV_FLOOR))
+    if uncovered:
+        warnings.warn(f"{uncovered} of {cg.length} samples have no window energy (window and hop={cg.hop} do not "
+                      "satisfy sum(w^2) > 0); they cannot be reconstructed", ReconstructionWarning, stacklevel=2)
+    return out / np.maximum(env, _ENV_FLOOR)

@@ -24,6 +24,15 @@ def test_without_lifter_the_original_signal_comes_back(kw):
     np.testing.assert_allclose(cp.reconstruct_cepstrogram(cg), x, atol=1e-9)
 
 
+@pytest.mark.parametrize("eps", [1e-12, 1e-6, 1e-3, 1e-1])
+def test_without_lifter_any_eps_gives_the_original_signal(eps):
+    # deep spectral valleys, so that many bins fall below the log floor; the gain floor is the same eps
+    x = np.convolve(_x(), np.ones(64) / 64, "same")
+    cg = cp.cepstrogram(x, FS, frame_len=256, hop=64, eps=eps)
+    assert cg.eps == eps
+    np.testing.assert_allclose(cp.reconstruct_cepstrogram(cg), x, atol=1e-9 * np.max(np.abs(x)))
+
+
 def test_gain_is_the_ratio_of_magnitudes_and_the_phase_is_kept():
     n = 512
     x = _x(n)
@@ -109,12 +118,6 @@ def test_silent_frames_stay_finite_and_silent():
     y = cp.reconstruct_cepstrogram(cp.cepstrogram(x, FS, frame_len=256, hop=64), cp.lowpass(khz_inv=2))
     assert np.all(np.isfinite(y))
     assert np.max(np.abs(y[1800:3200])) < 1e-6
-
-
-def test_power_cepstrogram_is_not_invertible():
-    cg = cp.cepstrogram(_x(), FS, frame_len=256, hop=64, kind="power")
-    with pytest.raises(ValueError, match="not invertible"):
-        cp.reconstruct_cepstrogram(cg)
 
 
 def test_without_stored_spectrogram_reconstruction_is_refused():

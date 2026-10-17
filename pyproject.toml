@@ -1,20 +1,43 @@
 [build-system]
-requires = ["setuptools>=61"]
+requires = ["setuptools>=77"]
 build-backend = "setuptools.build_meta"
 
 [project]
 name = "cepstrum"
-version = "0.1.0"
-description = "Cepstrum / cepstrogram analysis, liftering and reconstruction"
+dynamic = ["version"]
+description = "Real cepstrum and cepstrogram analysis: liftering, low / high quefrency separation and reconstruction"
+readme = "README.md"
+license = "MIT"
+license-files = ["LICENSE"]
+authors = [{ name = "Oshima-F" }]
 requires-python = ">=3.9"
 dependencies = ["numpy>=1.22"]
+classifiers = [
+    "Programming Language :: Python :: 3",
+    "Programming Language :: Python :: 3.9",
+    "Programming Language :: Python :: 3.10",
+    "Programming Language :: Python :: 3.11",
+    "Programming Language :: Python :: 3.12",
+    "Programming Language :: Python :: 3.13",
+    "Topic :: Scientific/Engineering",
+    "Topic :: Multimedia :: Sound/Audio :: Analysis",
+    "Typing :: Typed",
+]
+
+[project.urls]
+Repository = "https://github.com/Oshima-F/CepstrumAnalysis"
 
 [project.optional-dependencies]
 test = ["pytest"]
-plot = ["matplotlib"]
 
 [tool.setuptools.packages.find]
 where = ["src"]
+
+[tool.setuptools.package-data]
+cepstrum = ["py.typed"]
+
+[tool.setuptools.dynamic]
+version = {attr = "cepstrum.__version__"}
 
 [tool.pytest.ini_options]
 testpaths = ["tests"]

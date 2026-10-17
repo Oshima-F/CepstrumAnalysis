@@ -6,7 +6,6 @@ from typing import Optional
 import numpy as np
 
 from .cepstrogram import Cepstrogram, cepstrogram
-from .core import CepKind
 from .lifter import Lifter
 from .split import Decomposition, make_lifter, split
 from .utils import WindowSpec
@@ -20,7 +19,6 @@ def analyze_cepstrogram(
     hop: Optional[int] = None,
     window: WindowSpec = "hann",
     n_fft: Optional[int] = None,
-    kind: CepKind = "real",
     lifter: Optional[Lifter] = None,
     cutoff: Optional[float] = None,
     khz_inv: Optional[float] = None,
@@ -44,7 +42,6 @@ def analyze_cepstrogram(
         window: ``"hann"``, ``"hamming"``, ``"rect"`` or an array of length ``frame_len``.
             Default ``"hann"``.
         n_fft: FFT length, at least ``frame_len``. Default ``frame_len``.
-        kind: ``"real"`` or ``"power"``. Default ``"real"``.
         lifter: Callable of signed quefrency [s], or weight array of length ``n_fft``, defining
             the low part. Default ``None``.
         cutoff: Lowpass cutoff [s = Hz^-1], instead of ``lifter``. Default ``None``.
@@ -62,9 +59,8 @@ def analyze_cepstrogram(
         A :class:`Decomposition` whose parts are :class:`Cepstrogram` objects.
 
     Raises:
-        ValueError: ``n_fft < frame_len``, an unknown ``kind``, or an invalid lifter
-            specification.
+        ValueError: ``n_fft < frame_len``, or an invalid lifter specification.
     """
-    full = cepstrogram(x, fs, frame_len=frame_len, hop=hop, window=window, n_fft=n_fft, kind=kind, eps=eps, db=db,
+    full = cepstrogram(x, fs, frame_len=frame_len, hop=hop, window=window, n_fft=n_fft, eps=eps, db=db,
                        store_spectrogram=store_spectrogram)
     return split(full, make_lifter(lifter, cutoff, khz_inv, period_hz))

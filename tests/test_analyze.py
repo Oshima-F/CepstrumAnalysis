@@ -20,10 +20,9 @@ def _voiced(n=1024, f0=125.0):
     return x
 
 
-@pytest.mark.parametrize("fn", [cp.analyze_real, cp.analyze_power])
-def test_low_plus_high_is_full(fn):
+def test_low_plus_high_is_full():
     x = rng.standard_normal(256)
-    r = fn(x, FS, khz_inv=3)
+    r = cp.analyze_real(x, FS, khz_inv=3)
     np.testing.assert_allclose(r.low.data + r.high.data, r.full.data, atol=1e-12)
 
 
@@ -64,14 +63,6 @@ def test_single_cepstrum_cannot_be_reconstructed():
     r = cp.analyze_real(_voiced(), FS, khz_inv=3)
     with pytest.raises(ValueError, match="cepstrogram"):
         r.reconstruct("full")
-
-
-def test_power_has_no_spectrum_or_reconstruction():
-    r = cp.analyze_power(rng.standard_normal(256), FS, khz_inv=3)
-    with pytest.raises(ValueError):
-        r.log_spectrum()
-    with pytest.raises(ValueError):
-        r.reconstruct()
 
 
 def test_spectrum_input():

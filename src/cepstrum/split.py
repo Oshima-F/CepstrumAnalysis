@@ -80,7 +80,7 @@ class Decomposition(Generic[T]):
         return np.fft.rfftfreq(self.full.n_fft, 1 / self.full.fs)
 
     def log_spectrum(self, part: str = "full") -> np.ndarray:
-        """One-sided log-magnitude spectrum [dB] carried by a component (real kind only).
+        """One-sided log-magnitude spectrum [dB] carried by a component.
 
         ``low`` is the spectral envelope; ``high`` is the fine-structure deviation around it.
         The result is in dB whether or not the cepstrum was computed with ``db=True``.
@@ -93,11 +93,9 @@ class Decomposition(Generic[T]):
             frequency axis is :attr:`freqs`.
 
         Raises:
-            ValueError: For a power cepstrum, or an unknown ``part``.
+            ValueError: Unknown ``part``.
         """
         c = self.part(part)
-        if c.kind == "power":
-            raise ValueError("a power cepstrum carries no invertible log spectrum")
         log_mag = np.fft.fft(c.data, axis=0).real[: self.full.n_fft // 2 + 1]
         return log_mag if c.db else DB_PER_NEPER * log_mag  # a db=True cepstrum is already in dB
 
@@ -116,7 +114,9 @@ class Decomposition(Generic[T]):
 
         Raises:
             ValueError: Not a cepstrogram (a single cepstrum has no frames to take the phase
-                from), a power cepstrogram, no stored spectrogram, or an unknown ``part``.
+                from), no stored spectrogram, or an unknown ``part``.
+            ReconstructionWarning: (warning) The window and hop leave samples without window
+                energy (see :func:`reconstruct_cepstrogram`).
         """
         self.part(part)  # validates the name
         if not isinstance(self.full, Cepstrogram):

@@ -154,3 +154,30 @@ def test_invalid_spectrum_raises():
 def test_invalid_lifters_raise(make):
     with pytest.raises(ValueError):
         make()
+
+
+# ---- reconstruction coverage ---------------------------------------------------------------
+
+def test_hann_without_overlap_warns_on_reconstruction():
+    cg = cp.cepstrogram(_noise(1024), FS, frame_len=256, hop=256)  # periodic Hann has w[0] = 0
+    with pytest.warns(cp.ReconstructionWarning, match=r"4 of 1024 samples"):
+        cp.reconstruct_cepstrogram(cg)
+
+
+def test_decomposition_reconstruct_warns_too():
+    r = cp.analyze_cepstrogram(_noise(1024), FS, frame_len=256, hop=256, khz_inv=1)
+    with pytest.warns(cp.ReconstructionWarning):
+        r.reconstruct("low")
+
+
+@pytest.mark.parametrize("kw", [
+    {"hop": 128},                                   # Hann with overlap
+    {"hop": 256, "window": "hamming"},              # w > 0 everywhere
+    {"hop": 256, "window": "rect"},
+])
+def test_covering_settings_do_not_warn(kw):
+    x = _noise(1024)
+    cg = cp.cepstrogram(x, FS, frame_len=256, **kw)
+    with warnings.catch_warnings():
+        warnings.simplefilter("error", cp.ReconstructionWarning)
+        np.testing.assert_allclose(cp.reconstruct_cepstrogram(cg), x, atol=1e-9)
